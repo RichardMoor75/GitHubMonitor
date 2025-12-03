@@ -48,6 +48,10 @@ cp .env.example .env
 *   `GITHUB_TOKEN`: (Опционально, но важно) Ваш GitHub Personal Access Token для увеличения лимитов API.
 
 ### 2. Список репозиториев
+Создайте файл `repos_to_monitor.json` на основе примера:
+```bash
+cp repos_to_monitor.json.example repos_to_monitor.json
+```
 Отредактируйте файл `repos_to_monitor.json`. Формат: `"Название для отображения": "owner/repo"`.
 
 Пример:

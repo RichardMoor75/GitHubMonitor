@@ -1,6 +1,6 @@
 {
   "xray": "XTLS/Xray-core",
-  "adguard": "AdguardTeam/AdGuardHome",
+  "adguard": "AdGuardTeam/AdGuardHome",
   "context7": "upstash/context7",
   "Nekogram": "Nekogram/Nekogram",
   "gemini-cli": "google-gemini/gemini-cli"

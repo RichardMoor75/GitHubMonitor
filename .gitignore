@@ -169,3 +169,5 @@ update_proxies/
 CLAUDE.*
 *mcp_init_done
 logs.txt
+github_releases_state.json
+repos_to_monitor.json
