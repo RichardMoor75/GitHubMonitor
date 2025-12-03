@@ -1,0 +1,4 @@
+httpx
+openai
+python-dotenv
+tenacity
