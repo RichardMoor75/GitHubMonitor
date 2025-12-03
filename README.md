@@ -18,8 +18,8 @@
 
 1.  **Клонируйте репозиторий:**
     ```bash
-    git clone https://github.com/your-username/github-monitor.git
-    cd github_monitor
+    git clone https://github.com/RichardMoor75/GitHubMonitor.git
+    cd GitHubMonitor
     ```
 
 2.  **Создайте виртуальное окружение (рекомендуется):**
