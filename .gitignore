@@ -168,3 +168,4 @@ site/
 update_proxies/
 CLAUDE.*
 *mcp_init_done
+logs.txt
