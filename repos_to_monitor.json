@@ -1,16 +1,7 @@
 {
   "xray": "XTLS/Xray-core",
-  "hysteria2": "apernet/hysteria",
-  "mihomo": "MetaCubeX/mihomo",
-  "clashmi": "KaringX/clashmi",
-  "cmfa": "MetaCubeX/ClashMetaForAndroid",
-  "audiobook": "advplyr/audiobookshelf",
-  "immich": "immich-app/immich",
-  "calibre": "janeczku/calibre-web",
   "adguard": "AdguardTeam/AdGuardHome",
-  "flyclash": "GtxFury/FlyClash-Android",
   "context7": "upstash/context7",
-  "joplin": "laurent22/joplin",
   "Nekogram": "Nekogram/Nekogram",
   "gemini-cli": "google-gemini/gemini-cli"
 }
