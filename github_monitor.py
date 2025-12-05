@@ -320,19 +320,23 @@ def get_openrouter_summary_with_retry(release_notes: str, language: str) -> str:
     # Формируем структурированный запрос в виде JSON
     # Это помогает модели четко отделить инструкции от контента и строго следовать языковым настройкам
     prompt_structure = {
-        "task": "Analyze release notes and generate a structured summary for system administrators",
+        "task": (
+            "Perform a deep analysis of the release notes and generate a COMPREHENSIVE and DETAILED summary "
+            "for system administrators. Your goal is NOT just to list changes, but to EXPLAIN their practical impact."
+        ),
         "target_language": language,
         "formatting_rules": {
             "format": "Markdown",
+            "verbosity": "Verbose and explanatory. Avoid brevity. Expand on 'why' a change matters.",
             "headers": "Use **double asterisks** for headers (e.g. **New Features**)",
             "lists": "Use • for list items",
             "emojis": "Use 🔒 for security, ⚡ for performance, ⚠️ for breaking changes",
             "forbidden": "NO technical tags, NO metadata, NO code blocks unless necessary",
             "structure": [
-                "**New Features** (list added features and their value)",
-                "**Fixes** (list bug fixes and security patches)",
-                "**Improvements** (list performance and stability updates)",
-                "**Breaking Changes** (ONLY if critical migration is needed)"
+                "**New Features** (List each feature, then hyphen, then a DETAILED explanation of what it does and why it is useful)",
+                "**Fixes** (Explain the bug and the resolution)",
+                "**Improvements** (Explain the optimization and its benefit)",
+                "**Breaking Changes** (Detailed migration steps if needed)"
             ]
         },
         "source_text": release_notes
@@ -351,10 +355,13 @@ def get_openrouter_summary_with_retry(release_notes: str, language: str) -> str:
                 {
                     "role": "system",
                     "content": (
-                        "You are an expert DevOps assistant. "
-                        "You will receive a JSON object with a 'source_text' and 'target_language'. "
-                        "Your goal is to analyze the text and output a summary strictly in the 'target_language'. "
-                        "Do not output JSON. Output clean, formatted Markdown."
+                        "You are an expert Senior DevOps Engineer and System Administrator. "
+                        "You excel at explaining technical changes to humans. "
+                        "You will receive a JSON object with source text. "
+                        "Analyze it deeply. If the release notes are brief, use your expert knowledge to infer the context "
+                        "and importance of the changes (without hallucinating non-existent features). "
+                        "Output strictly in the 'target_language'. "
+                        "Output clean, formatted Markdown."
                     )
                 },
                 {
@@ -503,9 +510,9 @@ async def check_repo_for_updates(
         
         # Улучшенное форматирование сообщения
         message = (
-            f"🎉 *Новый релиз: {escape_markdown_v2(repo_name)}*\n"
-            f"📦 Версия: `{escape_markdown_v2(tag_name)}` {prerelease_tag}\n"
-            f"📅 Дата: {escape_markdown_v2(published_at[:10])}\n"
+            f"🎉 *New Release: {escape_markdown_v2(repo_name)}*\n"
+            f"📦 Version: `{escape_markdown_v2(tag_name)}` {prerelease_tag}\n"
+            f"📅 Date: {escape_markdown_v2(published_at[:10])}\n"
             f"━━━━━━━━━━━━━━━━━━\n\n"
             f"{openrouter_summary}\n\n"
             f"━━━━━━━━━━━━━━━━━━\n"
