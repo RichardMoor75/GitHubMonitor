@@ -165,84 +165,83 @@ def save_state(state: Dict[str, int]):
 # --- Безопасное экранирование Markdown V2 ---
 def convert_ai_markdown_to_telegram(text: str) -> str:
     """
-    Конвертирует AI markdown в Telegram MarkdownV2 с агрессивным экранированием.
-    
-    Telegram MarkdownV2 требует экранирования символов:
-    _ * [ ] ( ) ~ ` > # + - = | { } . !
+    Конвертирует AI markdown в Telegram MarkdownV2 с правильным вложенным экранированием.
     
     Алгоритм:
-    1. Вырезаем и сохраняем ссылки [text](url)
-    2. Вырезаем и сохраняем жирный текст **text** (превращая в *text*)
-    3. Вырезаем и сохраняем код `code`
-    4. Экранируем ВСЕ спецсимволы в оставшемся тексте
-    5. Возвращаем сохраненные блоки на места
-    
-    ВАЖНО: Плейсхолдеры должны состоять ТОЛЬКО из букв и цифр, чтобы не быть экранированными.
+    1. Вырезаем код (inline и block) -> сохраняем как есть (не экранируем внутри).
+    2. Вырезаем ссылки -> сохраняем компоненты (текст требует экранирования, url - частично).
+    3. Вырезаем жирный текст -> сохраняем содержимое (требует экранирования).
+    4. Экранируем весь оставшийся основной текст.
+    5. Восстанавливаем блоки, применяя экранирование к их содержимому.
     """
     if not text:
         return ""
 
-    # Уникальные префиксы без спецсимволов
+    # Вспомогательная функция для экранирования
+    def escape_md(t):
+        escape_chars = r'_*[]()~`>#+-=|{}.!'
+        return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', t)
+
+    # Плейсхолдеры
+    CODE_MARKER = "CODEXYZ"
     LINK_MARKER = "LINKXYZ"
     BOLD_MARKER = "BOLDXYZ"
-    CODE_MARKER = "CODEXYZ"
 
-    # 1. Сохраняем ссылки
+    # 1. Сохраняем код (сначала блоки ```...```, потом инлайн `...`)
+    codes = []
+    def save_code_block(match):
+        placeholder = f"{CODE_MARKER}BLK{len(codes)}E"
+        codes.append(match.group(0)) # Весь блок кода целиком
+        return placeholder
+
+    def save_inline_code(match):
+        placeholder = f"{CODE_MARKER}INL{len(codes)}E"
+        codes.append(match.group(0))
+        return placeholder
+
+    text = re.sub(r'```[\s\S]*?```', save_code_block, text)
+    text = re.sub(r'`[^`]+`', save_inline_code, text)
+
+    # 2. Сохраняем ссылки [text](url)
     links = []
     def save_link(match):
         placeholder = f"{LINK_MARKER}{len(links)}E"
-        links.append(match.group(0))
+        links.append((match.group(1), match.group(2))) # (text, url)
         return placeholder
     
-    # Сначала ссылки, чтобы внутри них не испортить ничего
     text = re.sub(r'\[([^\]]+)\]\(([^\)]+)\)', save_link, text)
 
-    # 2. Сохраняем жирный текст **bold** -> *bold*
+    # 3. Сохраняем жирный текст **text**
     bolds = []
     def save_bold(match):
         placeholder = f"{BOLD_MARKER}{len(bolds)}E"
-        # Telegram использует * для жирного, AI использует **
-        content = match.group(1)
-        bolds.append(f"*{content}*") 
+        bolds.append(match.group(1)) # Сохраняем только содержимое
         return placeholder
     
     text = re.sub(r'\*\*([^\*]+)\*\*', save_bold, text)
 
-    # 3. Сохраняем код `code`
-    codes = []
-    def save_code(match):
-        placeholder = f"{CODE_MARKER}{len(codes)}E"
-        codes.append(match.group(0))
-        return placeholder
-        
-    text = re.sub(r'`([^`]+)`', save_code, text)
+    # 4. Экранируем основной текст
+    text = escape_md(text)
 
-    # 4. Экранирование всех спецсимволов MarkdownV2
-    # Список: _ * [ ] ( ) ~ ` > # + - = | { } . !
-    escape_chars = r'_*[]()~`>#+-=|{}.!'
-    escaped_text = ""
+    # 5. Восстанавливаем блоки в обратном порядке (хотя порядок не важен, т.к. маркеры уникальны)
     
-    for char in text:
-        if char in escape_chars:
-            escaped_text += f"\\{char}"
-        else:
-            escaped_text += char
-            
-    text = escaped_text
+    # Восстанавливаем жирный: * + escaped_content + *
+    for i, content in enumerate(bolds):
+        # Экранируем содержимое жирного текста
+        escaped_content = escape_md(content)
+        text = text.replace(f"{BOLD_MARKER}{i}E", f"*{escaped_content}*")
 
-    # 5. Восстанавливаем сохраненные блоки
-    
-    # Восстанавливаем код
-    for i, code in enumerate(codes):
-        text = text.replace(f"{CODE_MARKER}{i}E", code)
+    # Восстанавливаем ссылки: [escaped_text](url)
+    for i, (link_text, link_url) in enumerate(links):
+        escaped_link_text = escape_md(link_text)
+        # URL в Telegram MDv2 требует экранирования ) и \
+        escaped_url = link_url.replace('\\', '\\\\').replace(')', '\\)')
+        text = text.replace(f"{LINK_MARKER}{i}E", f"[{escaped_link_text}]({escaped_url})")
 
-    # Восстанавливаем жирный текст
-    for i, bold in enumerate(bolds):
-        text = text.replace(f"{BOLD_MARKER}{i}E", bold)
-        
-    # Восстанавливаем ссылки
-    for i, link in enumerate(links):
-        text = text.replace(f"{LINK_MARKER}{i}E", link)
+    # Восстанавливаем код: как есть
+    for i, code_block in enumerate(codes):
+        marker = f"{CODE_MARKER}BLK{i}E" if f"{CODE_MARKER}BLK{i}E" in text else f"{CODE_MARKER}INL{i}E"
+        text = text.replace(marker, code_block)
 
     return text
 
