@@ -173,17 +173,24 @@ def convert_ai_markdown_to_telegram(text: str) -> str:
     Алгоритм:
     1. Вырезаем и сохраняем ссылки [text](url)
     2. Вырезаем и сохраняем жирный текст **text** (превращая в *text*)
-    3. Вырезаем и сохраняем списки (строки, начинающиеся с • или -)
-    4. Экранируем ВСЕ остальные спецсимволы в оставшемся тексте
+    3. Вырезаем и сохраняем код `code`
+    4. Экранируем ВСЕ спецсимволы в оставшемся тексте
     5. Возвращаем сохраненные блоки на места
+    
+    ВАЖНО: Плейсхолдеры должны состоять ТОЛЬКО из букв и цифр, чтобы не быть экранированными.
     """
     if not text:
         return ""
 
+    # Уникальные префиксы без спецсимволов
+    LINK_MARKER = "LINKXYZ"
+    BOLD_MARKER = "BOLDXYZ"
+    CODE_MARKER = "CODEXYZ"
+
     # 1. Сохраняем ссылки
     links = []
     def save_link(match):
-        placeholder = f"LINK_PH_{len(links)}"
+        placeholder = f"{LINK_MARKER}{len(links)}E"
         links.append(match.group(0))
         return placeholder
     
@@ -193,7 +200,7 @@ def convert_ai_markdown_to_telegram(text: str) -> str:
     # 2. Сохраняем жирный текст **bold** -> *bold*
     bolds = []
     def save_bold(match):
-        placeholder = f"BOLD_PH_{len(bolds)}"
+        placeholder = f"{BOLD_MARKER}{len(bolds)}E"
         # Telegram использует * для жирного, AI использует **
         content = match.group(1)
         bolds.append(f"*{content}*") 
@@ -204,7 +211,7 @@ def convert_ai_markdown_to_telegram(text: str) -> str:
     # 3. Сохраняем код `code`
     codes = []
     def save_code(match):
-        placeholder = f"CODE_PH_{len(codes)}"
+        placeholder = f"{CODE_MARKER}{len(codes)}E"
         codes.append(match.group(0))
         return placeholder
         
@@ -223,19 +230,19 @@ def convert_ai_markdown_to_telegram(text: str) -> str:
             
     text = escaped_text
 
-    # 5. Восстанавливаем сохраненные блоки (в обратном порядке вложенности, если бы она была)
+    # 5. Восстанавливаем сохраненные блоки
     
-    # Восстанавливаем код (он уже экранирован внутри себя не должен быть, но markdown v2 требует экранирования ` внутри `...`? Нет, внутри `...` экранирование работает иначе, но мы просто вернем как есть)
+    # Восстанавливаем код
     for i, code in enumerate(codes):
-        text = text.replace(f"CODE_PH_{i}", code)
+        text = text.replace(f"{CODE_MARKER}{i}E", code)
 
     # Восстанавливаем жирный текст
     for i, bold in enumerate(bolds):
-        text = text.replace(f"BOLD_PH_{i}", bold)
+        text = text.replace(f"{BOLD_MARKER}{i}E", bold)
         
     # Восстанавливаем ссылки
     for i, link in enumerate(links):
-        text = text.replace(f"LINK_PH_{i}", link)
+        text = text.replace(f"{LINK_MARKER}{i}E", link)
 
     return text
 
