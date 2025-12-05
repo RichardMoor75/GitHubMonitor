@@ -68,7 +68,7 @@ logging.basicConfig(
 logger = logging.getLogger("GitHubMonitorOpenRouter")
 
 # --- Загрузка конфигурации ---
-def load_configuration() -> Tuple[str, int, str, Optional[str], str]:
+def load_configuration() -> Tuple[str, int, str, Optional[str], str, str]:
     """Загружает конфигурацию исключительно из переменных окружения (.env)."""
     try:
         bot_token = os.getenv('MONITOR_BOT_TOKEN')
@@ -76,6 +76,7 @@ def load_configuration() -> Tuple[str, int, str, Optional[str], str]:
         openrouter_api_key = os.getenv('OPENROUTER_API_KEY')
         github_token = os.getenv('GITHUB_TOKEN')
         openrouter_model = os.getenv('OPENROUTER_MODEL', 'openai/gpt-4o-mini')
+        summary_language = os.getenv('SUMMARY_LANGUAGE', 'русском языке') # Default to Russian
         
         # Валидация обязательных полей
         if not bot_token:
@@ -92,14 +93,14 @@ def load_configuration() -> Tuple[str, int, str, Optional[str], str]:
         if not openrouter_api_key or 'ВСТАВЬ_СЮДА' in openrouter_api_key:
             raise ValueError("API-ключ для OpenRouter не настроен. Получите ключ на https://openrouter.ai/")
         
-        return bot_token, admin_chat_id, openrouter_api_key, github_token, openrouter_model
+        return bot_token, admin_chat_id, openrouter_api_key, github_token, openrouter_model, summary_language
         
     except Exception as e:
         logger.critical(f"КРИТИЧЕСКАЯ ОШИБКА при загрузке конфигурации: {e}")
         raise
 
 # Глобальные переменные для конфигурации
-BOT_TOKEN, ADMIN_CHAT_ID, OPENROUTER_API_KEY, GITHUB_TOKEN, OPENROUTER_MODEL = load_configuration()
+BOT_TOKEN, ADMIN_CHAT_ID, OPENROUTER_API_KEY, GITHUB_TOKEN, OPENROUTER_MODEL, SUMMARY_LANGUAGE = load_configuration()
 
 # Инициализация OpenRouter клиента
 # OpenRouter использует OpenAI-совместимый API
@@ -301,7 +302,7 @@ def split_message_markdown(text: str, max_length: int = TELEGRAM_MAX_MESSAGE_LEN
     retry=retry_if_exception_type((Exception,)),
     reraise=True
 )
-def get_openrouter_summary_with_retry(release_notes: str) -> str:
+def get_openrouter_summary_with_retry(release_notes: str, language: str) -> str:
     """
     Получает AI-саммари через OpenRouter с автоматическими повторными попытками.
     
@@ -317,7 +318,7 @@ def get_openrouter_summary_with_retry(release_notes: str) -> str:
         logger.info(f"📝 Release notes обрезаны до {max_length} символов")
     
     # Улучшенный промпт для развернутых ответов
-    prompt = f"""Ты - опытный системный администратор. Проанализируй release notes и предоставь развернутую информацию на русском языке.
+    prompt = f"""Ты - опытный системный администратор. Проанализируй release notes и предоставь развернутую информацию на {language}.
 
 КРИТИЧЕСКИ ВАЖНО:
 - Используй ТОЛЬКО обычный текст и markdown с **двойными звездочками** для заголовков
@@ -397,10 +398,10 @@ Release notes:
         logger.error(f"❌ Ошибка OpenRouter API: {e}")
         raise
 
-def get_openrouter_summary(release_notes: str) -> str:
+def get_openrouter_summary(release_notes: str, language: str) -> str:
     """Обертка для OpenRouter-саммаризации с fallback на упрощенный текст."""
     try:
-        return get_openrouter_summary_with_retry(release_notes)
+        return get_openrouter_summary_with_retry(release_notes, language)
     except Exception as e:
         logger.error(f"❌ Критическая ошибка OpenRouter после всех попыток: {e}")
         logger.warning("📝 Возвращаю упрощенный оригинальный текст")
@@ -509,7 +510,7 @@ async def check_repo_for_updates(
         
         logger.info(f"[{repo_name}] 🤖 Запрашиваю OpenRouter AI-саммари...")
         # OpenRouter API работает синхронно, используем asyncio.to_thread
-        openrouter_summary = await asyncio.to_thread(get_openrouter_summary, original_body)
+        openrouter_summary = await asyncio.to_thread(get_openrouter_summary, original_body, SUMMARY_LANGUAGE)
         
         prerelease_tag = "🧪 PRE\\-RELEASE" if is_prerelease else ""
         
