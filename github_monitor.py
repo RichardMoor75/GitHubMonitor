@@ -29,7 +29,7 @@ from logging.handlers import RotatingFileHandler
 
 import httpx
 from openai import OpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, AsyncRetrying
 from dotenv import load_dotenv
 
 # --- Загрузка переменных окружения ---
@@ -165,59 +165,78 @@ def save_state(state: Dict[str, int]):
 # --- Безопасное экранирование Markdown V2 ---
 def convert_ai_markdown_to_telegram(text: str) -> str:
     """
-    Конвертирует AI markdown (обычный) в Telegram MarkdownV2.
+    Конвертирует AI markdown в Telegram MarkdownV2 с агрессивным экранированием.
     
-    Преобразования:
-    - **текст** → *текст* (жирный)
-    - Экранирует остальные спецсимволы
+    Telegram MarkdownV2 требует экранирования символов:
+    _ * [ ] ( ) ~ ` > # + - = | { } . !
+    
+    Алгоритм:
+    1. Вырезаем и сохраняем ссылки [text](url)
+    2. Вырезаем и сохраняем жирный текст **text** (превращая в *text*)
+    3. Вырезаем и сохраняем списки (строки, начинающиеся с • или -)
+    4. Экранируем ВСЕ остальные спецсимволы в оставшемся тексте
+    5. Возвращаем сохраненные блоки на места
     """
     if not text:
         return ""
-    
-    # Используем placeholders БЕЗ спецсимволов markdown
-    LINK_PREFIX = "XLINKHOLDER"
-    BOLD_PREFIX = "XBOLDHOLDER"
-    
-    # Шаг 1: Сохраняем все ссылки [текст](url)
+
+    # 1. Сохраняем ссылки
     links = []
-    link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
-    
     def save_link(match):
-        link_id = f"{LINK_PREFIX}{len(links)}X"
+        placeholder = f"LINK_PH_{len(links)}"
         links.append(match.group(0))
-        return link_id
+        return placeholder
     
-    text = re.sub(link_pattern, save_link, text)
-    
-    # Шаг 2: Конвертируем **текст** в *текст* (для жирного в Telegram)
-    text = re.sub(r'\*\*([^\*]+?)\*\*', r'*\1*', text)
-    
-    # Шаг 3: Сохраняем жирные блоки *текст*
-    bold_parts = []
-    bold_pattern = r'\*([^\*]+?)\*'
-    
+    # Сначала ссылки, чтобы внутри них не испортить ничего
+    text = re.sub(r'\[([^\]]+)\]\(([^\)]+)\)', save_link, text)
+
+    # 2. Сохраняем жирный текст **bold** -> *bold*
+    bolds = []
     def save_bold(match):
-        bold_id = f"{BOLD_PREFIX}{len(bold_parts)}X"
-        bold_parts.append(match.group(0))
-        return bold_id
+        placeholder = f"BOLD_PH_{len(bolds)}"
+        # Telegram использует * для жирного, AI использует **
+        content = match.group(1)
+        bolds.append(f"*{content}*") 
+        return placeholder
     
-    text = re.sub(bold_pattern, save_bold, text)
+    text = re.sub(r'\*\*([^\*]+)\*\*', save_bold, text)
+
+    # 3. Сохраняем код `code`
+    codes = []
+    def save_code(match):
+        placeholder = f"CODE_PH_{len(codes)}"
+        codes.append(match.group(0))
+        return placeholder
+        
+    text = re.sub(r'`([^`]+)`', save_code, text)
+
+    # 4. Экранирование всех спецсимволов MarkdownV2
+    # Список: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    escaped_text = ""
     
-    # Шаг 4: Экранируем ВСЕ спецсимволы MarkdownV2
-    # Список спецсимволов для экранирования
-    escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in text:
+        if char in escape_chars:
+            escaped_text += f"\\{char}"
+        else:
+            escaped_text += char
+            
+    text = escaped_text
+
+    # 5. Восстанавливаем сохраненные блоки (в обратном порядке вложенности, если бы она была)
     
-    for char in escape_chars:
-        text = text.replace(char, '\\' + char)
-    
-    # Шаг 5: Возвращаем жирные блоки (они уже в правильном формате *текст*)
-    for i, bold_text in enumerate(bold_parts):
-        text = text.replace(f"{BOLD_PREFIX}{i}X", bold_text)
-    
-    # Шаг 6: Возвращаем ссылки (они уже в правильном формате [текст](url))
+    # Восстанавливаем код (он уже экранирован внутри себя не должен быть, но markdown v2 требует экранирования ` внутри `...`? Нет, внутри `...` экранирование работает иначе, но мы просто вернем как есть)
+    for i, code in enumerate(codes):
+        text = text.replace(f"CODE_PH_{i}", code)
+
+    # Восстанавливаем жирный текст
+    for i, bold in enumerate(bolds):
+        text = text.replace(f"BOLD_PH_{i}", bold)
+        
+    # Восстанавливаем ссылки
     for i, link in enumerate(links):
-        text = text.replace(f"{LINK_PREFIX}{i}X", link)
-    
+        text = text.replace(f"LINK_PH_{i}", link)
+
     return text
 
 def escape_markdown_v2(text: str) -> str:
@@ -465,6 +484,10 @@ async def send_error_notification(error_msg: str):
     except Exception as e:
         logger.error(f"Не удалось отправить уведомление об ошибке: {e}")
 
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, AsyncRetrying
+
+# ... (imports remain the same)
+
 # --- Проверка репозитория ---
 async def check_repo_for_updates(
     client: httpx.AsyncClient,
@@ -484,7 +507,28 @@ async def check_repo_for_updates(
             headers["Authorization"] = f"token {GITHUB_TOKEN}"
             logger.debug(f"🔑 Используется GitHub token для {repo_name}")
         
-        response = await client.get(url, headers=headers, timeout=15)
+        # Попытка запроса с повторами (Retries)
+        # Пытаемся 3 раза с экспоненциальной задержкой при сетевых ошибках
+        try:
+            async for attempt in AsyncRetrying(stop=stop_after_attempt(3), wait=wait_exponential(min=4, max=10), reraise=True):
+                with attempt:
+                    response = await client.get(url, headers=headers, timeout=15)
+                    # Если 5xx ошибка сервера - рейзим, чтобы сработал retry
+                    if response.status_code >= 500:
+                        response.raise_for_status()
+                    # Если 4xx (кроме 404, 403) - это ошибки клиента, retry не поможет, но обработаем ниже
+        except httpx.HTTPStatusError as e:
+            # Пробрасываем дальше для обработки кодов 404/403
+            response = e.response 
+            if response.status_code < 500:
+                pass # Это не серверная ошибка, идем дальше к raise_for_status()
+            else:
+                raise # Серверная ошибка после всех попыток
+        except Exception as e:
+            # Сетевые ошибки после всех попыток
+            logger.error(f"[{repo_name}] ❌ Сетевая ошибка после 3 попыток: {e}")
+            raise e
+
         response.raise_for_status()
         
         latest_release = response.json()
