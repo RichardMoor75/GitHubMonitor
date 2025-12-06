@@ -260,25 +260,15 @@ def convert_ai_markdown_to_telegram(text: str) -> str:
     return text
 
 def escape_markdown_v2(text: str) -> str:
-    """Экранирует спецсимволы Telegram MarkdownV2, сохраняя ссылки."""
+    """
+    Экранирует спецсимволы Telegram MarkdownV2 в простом тексте.
+    Используется для заголовков (имя репо, версия), где не ожидается сложного форматирования.
+    """
     if not text:
         return ""
     
-    links = []
-    
-    def link_replacer(match):
-        placeholder = f"__LINK_{uuid.uuid4().hex}__"
-        links.append((placeholder, match.group(0)))
-        return placeholder
-    
-    text_without_links = re.sub(r'\[.*?\]\(.*?\)', link_replacer, text)
-    escape_chars = r'\_*[]()~`>#+-=|{}.!'
-    escaped_text = re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text_without_links)
-    
-    for placeholder, original_link in links:
-        escaped_text = escaped_text.replace(placeholder, original_link)
-    
-    return escaped_text
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 # --- Чанкование сообщений для Telegram ---
 def split_message_markdown(text: str, max_length: int = TELEGRAM_MAX_MESSAGE_LENGTH) -> List[str]:
@@ -503,10 +493,6 @@ async def send_error_notification(error_msg: str):
         await send_telegram_message(message)
     except Exception as e:
         logger.error(f"Не удалось отправить уведомление об ошибке: {e}")
-
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, AsyncRetrying
-
-# ... (imports remain the same)
 
 # --- Проверка репозитория ---
 async def check_repo_for_updates(
