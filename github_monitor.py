@@ -68,7 +68,7 @@ logging.basicConfig(
 logger = logging.getLogger("GitHubMonitorOpenRouter")
 
 # --- Загрузка конфигурации ---
-def load_configuration() -> Tuple[str, int, str, Optional[str], str, str]:
+def load_configuration() -> Tuple[str, int, str, Optional[str], str, str, int]:
     """Загружает конфигурацию исключительно из переменных окружения (.env)."""
     try:
         bot_token = os.getenv('MONITOR_BOT_TOKEN')
@@ -77,6 +77,13 @@ def load_configuration() -> Tuple[str, int, str, Optional[str], str, str]:
         github_token = os.getenv('GITHUB_TOKEN')
         openrouter_model = os.getenv('OPENROUTER_MODEL', 'openai/gpt-4o-mini')
         summary_language = os.getenv('SUMMARY_LANGUAGE', 'русском языке') # Default to Russian
+        max_tokens_str = os.getenv('OPENROUTER_MAX_TOKENS', '1000')
+        
+        try:
+            max_tokens = int(max_tokens_str)
+        except ValueError:
+            logger.warning(f"Некорректное значение OPENROUTER_MAX_TOKENS: {max_tokens_str}, использую 1000")
+            max_tokens = 1000
         
         # Валидация обязательных полей
         if not bot_token:
@@ -93,14 +100,14 @@ def load_configuration() -> Tuple[str, int, str, Optional[str], str, str]:
         if not openrouter_api_key or 'ВСТАВЬ_СЮДА' in openrouter_api_key:
             raise ValueError("API-ключ для OpenRouter не настроен. Получите ключ на https://openrouter.ai/")
         
-        return bot_token, admin_chat_id, openrouter_api_key, github_token, openrouter_model, summary_language
+        return bot_token, admin_chat_id, openrouter_api_key, github_token, openrouter_model, summary_language, max_tokens
         
     except Exception as e:
         logger.critical(f"КРИТИЧЕСКАЯ ОШИБКА при загрузке конфигурации: {e}")
         raise
 
 # Глобальные переменные для конфигурации
-BOT_TOKEN, ADMIN_CHAT_ID, OPENROUTER_API_KEY, GITHUB_TOKEN, OPENROUTER_MODEL, SUMMARY_LANGUAGE = load_configuration()
+BOT_TOKEN, ADMIN_CHAT_ID, OPENROUTER_API_KEY, GITHUB_TOKEN, OPENROUTER_MODEL, SUMMARY_LANGUAGE, MAX_TOKENS = load_configuration()
 
 # Инициализация OpenRouter клиента
 # OpenRouter использует OpenAI-совместимый API
@@ -394,7 +401,7 @@ def get_openrouter_summary_with_retry(release_notes: str, language: str) -> str:
                     "content": user_content
                 }
             ],
-            max_tokens=1000,
+            max_tokens=MAX_TOKENS,
             temperature=0.3,
             extra_headers={
                 "HTTP-Referer": "https://github.com/your-username/github-monitor",
