@@ -21,6 +21,13 @@ This application is designed and tested for **Linux** environments.
     *   Log rotation (protection against disk overflow).
 *   **📝 Smart Formatting:** Correctly handles MarkdownV2 in Telegram and splits long messages into parts.
 
+## 🚀 Performance & Optimization
+
+*   **⚡ Parallel Processing:** Uses `asyncio.Semaphore` to process multiple repositories concurrently without hitting API rate limits.
+*   **📉 Traffic Economy:** Implements **ETag / If-None-Match** support for GitHub API. If a release hasn't changed, the server returns `304 Not Modified` (zero body download), saving bandwidth and quota.
+*   **🔌 Connection Reuse:** Reuses a single `httpx.AsyncClient` instance for all Telegram notifications, reducing SSL handshake overhead.
+*   **⏱️ Smart Timeouts:** Explicit timeouts for AI calls prevent the script from hanging indefinitely during API outages.
+
 ## 🛠️ Installation
 
 1.  **Clone the repository:**

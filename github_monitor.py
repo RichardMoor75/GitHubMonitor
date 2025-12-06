@@ -151,15 +151,33 @@ def load_repos_to_monitor() -> Dict[str, str]:
         return {}
 
 # --- Управление состоянием ---
-def load_state() -> Dict[str, int]:
-    """Загружает состояние последних проверенных релизов."""
+def load_state() -> Dict[str, Dict[str, Any]]:
+    """
+    Загружает состояние последних проверенных релизов.
+    Автоматически мигрирует со старого формата (int) на новый (dict с id и etag).
+    """
     if not STATE_PATH.exists():
         logger.info(f"Файл состояния не найден, создаю новый")
         return {}
     
     try:
         with open(STATE_PATH, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+        
+        # Миграция данных "на лету"
+        migrated_state = {}
+        for repo, value in data.items():
+            if isinstance(value, int):
+                # Старый формат: только ID, ETag неизвестен
+                migrated_state[repo] = {"id": value, "etag": None}
+            elif isinstance(value, dict):
+                # Новый формат
+                migrated_state[repo] = value
+            else:
+                logger.warning(f"Некорректные данные состояния для {repo}: {value}")
+        
+        return migrated_state
+        
     except json.JSONDecodeError:
         logger.warning("⚠️ Файл состояния поврежден, начинаю с чистого листа")
         return {}
@@ -167,7 +185,7 @@ def load_state() -> Dict[str, int]:
         logger.error(f"Ошибка при загрузке состояния: {e}")
         return {}
 
-def save_state(state: Dict[str, int]):
+def save_state(state: Dict[str, Dict[str, Any]]):
     """Сохраняет состояние в файл."""
     try:
         with open(STATE_PATH, 'w', encoding='utf-8') as f:
@@ -400,6 +418,7 @@ def get_openrouter_summary_with_retry(release_notes: str, language: str) -> str:
             ],
             max_tokens=MAX_TOKENS,
             temperature=0.3,
+            timeout=30.0,  # Явный таймаут 30 секунд
             extra_headers={
                 "HTTP-Referer": "https://github.com/your-username/github-monitor",
                 "X-Title": "GitHub Release Monitor"
@@ -440,12 +459,10 @@ def get_openrouter_summary(release_notes: str, language: str) -> str:
         return escape_markdown_v2(plain_text)
 
 # --- Отправка в Telegram ---
-async def send_telegram_message(message: str):
+async def send_telegram_message(client: httpx.AsyncClient, message: str):
     """
     Асинхронная отправка сообщения в Telegram с автоматическим чанкованием.
-    
-    Если сообщение превышает лимит Telegram (4096 символов), 
-    оно автоматически разбивается на несколько частей.
+    Использует переданный клиент для переиспользования соединений.
     """
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     
@@ -456,24 +473,23 @@ async def send_telegram_message(message: str):
         logger.info(f"📨 Сообщение разбито на {len(message_chunks)} частей")
     
     try:
-        async with httpx.AsyncClient() as client:
-            for i, chunk in enumerate(message_chunks, 1):
-                payload = {
-                    'chat_id': ADMIN_CHAT_ID,
-                    'text': chunk,
-                    'parse_mode': 'MarkdownV2',
-                    'disable_web_page_preview': True
-                }
-                
-                response = await client.post(url, data=payload, timeout=20)
-                response.raise_for_status()
-                
-                if len(message_chunks) > 1:
-                    logger.info(f"✉️ Часть {i}/{len(message_chunks)} отправлена в Telegram")
-                    # Небольшая задержка между сообщениями
-                    await asyncio.sleep(0.5)
-                else:
-                    logger.info("✉️ Уведомление отправлено в Telegram")
+        for i, chunk in enumerate(message_chunks, 1):
+            payload = {
+                'chat_id': ADMIN_CHAT_ID,
+                'text': chunk,
+                'parse_mode': 'MarkdownV2',
+                'disable_web_page_preview': True
+            }
+            
+            response = await client.post(url, data=payload, timeout=20)
+            response.raise_for_status()
+            
+            if len(message_chunks) > 1:
+                logger.info(f"✉️ Часть {i}/{len(message_chunks)} отправлена в Telegram")
+                # Небольшая задержка между сообщениями
+                await asyncio.sleep(0.5)
+            else:
+                logger.info("✉️ Уведомление отправлено в Telegram")
             
     except httpx.HTTPStatusError as e:
         logger.error(f"❌ Telegram API ошибка: {e.response.text}")
@@ -482,7 +498,7 @@ async def send_telegram_message(message: str):
         logger.error(f"❌ Сетевая ошибка Telegram: {e}")
         raise
 
-async def send_error_notification(error_msg: str):
+async def send_error_notification(client: httpx.AsyncClient, error_msg: str):
     """Отправляет уведомление об ошибке администратору."""
     try:
         message = (
@@ -490,121 +506,136 @@ async def send_error_notification(error_msg: str):
             f"`{escape_markdown_v2(error_msg)}`\n\n"
             f"Время: {escape_markdown_v2(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
         )
-        await send_telegram_message(message)
+        await send_telegram_message(client, message)
     except Exception as e:
         logger.error(f"Не удалось отправить уведомление об ошибке: {e}")
 
 # --- Проверка репозитория ---
 async def check_repo_for_updates(
+    semaphore: asyncio.Semaphore,
     client: httpx.AsyncClient,
     repo_name: str,
     repo_path: str,
-    last_seen_id: Optional[int]
-) -> Optional[int]:
-    """Асинхронная проверка репозитория на наличие новых релизов."""
-    try:
-        url = f"https://api.github.com/repos/{repo_path}/releases/latest"
-        headers = {
-            "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "GitHub-Monitor-OpenRouter/1.0"
-        }
-        
-        if GITHUB_TOKEN:
-            headers["Authorization"] = f"token {GITHUB_TOKEN}"
-            logger.debug(f"🔑 Используется GitHub token для {repo_name}")
-        
-        # Попытка запроса с повторами (Retries)
-        # Пытаемся 3 раза с экспоненциальной задержкой при сетевых ошибках
+    last_state: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """
+    Асинхронная проверка репозитория на наличие новых релизов.
+    Использует семафор для ограничения одновременных запросов.
+    Поддерживает ETag для оптимизации запросов (304 Not Modified).
+    """
+    async with semaphore:
         try:
-            async for attempt in AsyncRetrying(stop=stop_after_attempt(3), wait=wait_exponential(min=4, max=10), reraise=True):
-                with attempt:
-                    response = await client.get(url, headers=headers, timeout=15)
-                    # Если 5xx ошибка сервера - рейзим, чтобы сработал retry
-                    if response.status_code >= 500:
-                        response.raise_for_status()
-                    # Если 4xx (кроме 404, 403) - это ошибки клиента, retry не поможет, но обработаем ниже
-        except httpx.HTTPStatusError as e:
-            # Пробрасываем дальше для обработки кодов 404/403
-            response = e.response 
-            if response.status_code < 500:
-                pass # Это не серверная ошибка, идем дальше к raise_for_status()
-            else:
-                raise # Серверная ошибка после всех попыток
-        except Exception as e:
-            # Сетевые ошибки после всех попыток
-            logger.error(f"[{repo_name}] ❌ Сетевая ошибка после 3 попыток: {e}")
-            raise e
-
-        response.raise_for_status()
-        
-        latest_release = response.json()
-        release_id = latest_release['id']
-        
-        if release_id == last_seen_id:
-            logger.info(f"[{repo_name}] ✔️ Нет обновлений ({latest_release['tag_name']})")
-            return None
-        
-        logger.info(f"[{repo_name}] 🔥 НОВЫЙ РЕЛИЗ: {latest_release['tag_name']}")
-        
-        tag_name = latest_release['tag_name']
-        html_url = latest_release['html_url']
-        published_at = latest_release.get('published_at', 'неизвестно')
-        is_prerelease = latest_release.get('prerelease', False)
-        original_body = latest_release.get('body') or 'Нет описания.'
-        
-        logger.info(f"[{repo_name}] 🤖 Запрашиваю OpenRouter AI-саммари...")
-        # OpenRouter API работает синхронно, используем asyncio.to_thread
-        openrouter_summary = await asyncio.to_thread(get_openrouter_summary, original_body, SUMMARY_LANGUAGE)
-        
-        prerelease_tag = "🧪 PRE\\-RELEASE" if is_prerelease else ""
-        
-        # Улучшенное форматирование сообщения
-        message = (
-            f"🎉 *New Release: {escape_markdown_v2(repo_name)}*\n"
-            f"📦 Version: `{escape_markdown_v2(tag_name)}` {prerelease_tag}\n"
-            f"📅 Date: {escape_markdown_v2(published_at[:10])}\n"
-            f"━━━━━━━━━━━━━━━━━━\n\n"
-            f"{openrouter_summary}\n\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"[📖 Full changelog]({html_url})"
-        )
-        
-        await send_telegram_message(message)
-        return release_id
-        
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            # Проверяем, существует ли сам репозиторий (возможно просто нет релизов)
-            try:
-                repo_check_url = f"https://api.github.com/repos/{repo_path}"
-                repo_resp = await client.head(repo_check_url, headers=headers, timeout=10)
-                if repo_resp.status_code == 200:
-                    logger.info(f"[{repo_name}] ℹ️ Репозиторий доступен, но релизов пока нет")
-                    return None
-            except Exception as check_e:
-                logger.warning(f"[{repo_name}] Не удалось проверить наличие репозитория: {check_e}")
-
-            logger.error(f"[{repo_name}] ❌ Репозиторий не найден: {repo_path}")
-            await send_error_notification(f"Репозиторий {repo_name} ({repo_path}) не найден")
-        elif e.response.status_code == 403:
-            logger.warning(f"[{repo_name}] ⚠️ Rate limit достигнут")
-        else:
-            logger.error(f"[{repo_name}] ❌ GitHub API ошибка {e.response.status_code}")
+            url = f"https://api.github.com/repos/{repo_path}/releases/latest"
+            headers = {
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "GitHub-Monitor-OpenRouter/1.0"
+            }
             
-    except Exception as e:
-        logger.error(f"[{repo_name}] ❌ Неизвестная ошибка: {e}", exc_info=True)
-        await send_error_notification(f"Ошибка при проверке {repo_name}: {str(e)}")
-    
-    return None
+            if GITHUB_TOKEN:
+                headers["Authorization"] = f"token {GITHUB_TOKEN}"
+            
+            # Добавляем ETag если есть
+            if last_state and last_state.get('etag'):
+                headers['If-None-Match'] = last_state['etag']
+            
+            # Попытка запроса с повторами (Retries)
+            try:
+                async for attempt in AsyncRetrying(stop=stop_after_attempt(3), wait=wait_exponential(min=4, max=10), reraise=True):
+                    with attempt:
+                        response = await client.get(url, headers=headers, timeout=15)
+                        # Если 5xx ошибка сервера - рейзим, чтобы сработал retry
+                        if response.status_code >= 500:
+                            response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                response = e.response
+                if response.status_code < 500:
+                    pass
+                else:
+                    raise
+            except Exception as e:
+                logger.error(f"[{repo_name}] ❌ Сетевая ошибка после 3 попыток: {e}")
+                raise e
+
+            # Обработка 304 Not Modified
+            if response.status_code == 304:
+                logger.info(f"[{repo_name}] 💤 Нет изменений (304 Not Modified)")
+                return None
+
+            response.raise_for_status()
+            
+            latest_release = response.json()
+            release_id = latest_release['id']
+            new_etag = response.headers.get('ETag')
+            
+            last_seen_id = last_state.get('id') if last_state else None
+            
+            if release_id == last_seen_id:
+                logger.info(f"[{repo_name}] ✔️ Нет обновлений (ID совпадает)")
+                # Обновляем ETag если он изменился (хотя при ID match это редкость)
+                return {"id": release_id, "etag": new_etag}
+            
+            logger.info(f"[{repo_name}] 🔥 НОВЫЙ РЕЛИЗ: {latest_release['tag_name']}")
+            
+            tag_name = latest_release['tag_name']
+            html_url = latest_release['html_url']
+            published_at = latest_release.get('published_at', 'неизвестно')
+            is_prerelease = latest_release.get('prerelease', False)
+            original_body = latest_release.get('body') or 'Нет описания.'
+            
+            logger.info(f"[{repo_name}] 🤖 Запрашиваю OpenRouter AI-саммари...")
+            # OpenRouter API работает синхронно, используем asyncio.to_thread
+            openrouter_summary = await asyncio.to_thread(get_openrouter_summary, original_body, SUMMARY_LANGUAGE)
+            
+            prerelease_tag = "🧪 PRE\\-RELEASE" if is_prerelease else ""
+            
+            # Улучшенное форматирование сообщения
+            message = (
+                f"🎉 *New Release: {escape_markdown_v2(repo_name)}*\n"
+                f"📦 Version: `{escape_markdown_v2(tag_name)}` {prerelease_tag}\n"
+                f"📅 Date: {escape_markdown_v2(published_at[:10])}\n"
+                f"━━━━━━━━━━━━━━━━━━\n\n"
+                f"{openrouter_summary}\n\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"[📖 Full changelog]({html_url})"
+            )
+            
+            await send_telegram_message(client, message)
+            
+            return {"id": release_id, "etag": new_etag}
+            
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                # Проверяем существование репо
+                try:
+                    repo_check_url = f"https://api.github.com/repos/{repo_path}"
+                    repo_resp = await client.head(repo_check_url, headers=headers, timeout=10)
+                    if repo_resp.status_code == 200:
+                        logger.info(f"[{repo_name}] ℹ️ Репозиторий доступен, но релизов пока нет")
+                        return None
+                except Exception:
+                    pass
+
+                logger.error(f"[{repo_name}] ❌ Репозиторий не найден: {repo_path}")
+                await send_error_notification(client, f"Репозиторий {repo_name} ({repo_path}) не найден")
+            elif e.response.status_code == 403:
+                logger.warning(f"[{repo_name}] ⚠️ Rate limit достигнут (403)")
+            else:
+                logger.error(f"[{repo_name}] ❌ GitHub API ошибка {e.response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"[{repo_name}] ❌ Неизвестная ошибка: {e}", exc_info=True)
+            await send_error_notification(client, f"Ошибка при проверке {repo_name}: {str(e)}")
+        
+        return None
 
 # --- Главная функция ---
 async def main():
     """Асинхронная главная функция мониторинга."""
     logger.info("=" * 60)
-    logger.info("🚀 Запуск GitHub Monitor (OpenRouter Edition)")
+    logger.info("🚀 Запуск GitHub Monitor (OpenRouter Edition) v2.0")
     logger.info(f"⏰ Время запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"🤖 AI: OpenRouter → {OPENROUTER_MODEL}")
-    logger.info(f"💰 Цена: $0.15/1M input + $0.60/1M output")
+    logger.info("⚡ Оптимизации: Semaphore(3), ETag support, Reused Client")
     logger.info("=" * 60)
     
     repos_to_monitor = load_repos_to_monitor()
@@ -615,22 +646,31 @@ async def main():
     current_state = load_state()
     new_state = current_state.copy()
     
+    # Ограничиваем количество одновременных проверок до 3-х, 
+    # чтобы не забить канал и не словить rate limits от OpenRouter
+    semaphore = asyncio.Semaphore(3)
+    
     async with httpx.AsyncClient() as client:
         tasks = []
         
         for repo_name, repo_path in repos_to_monitor.items():
-            last_id = current_state.get(repo_name)
-            task = check_repo_for_updates(client, repo_name, repo_path, last_id)
+            last_repo_state = current_state.get(repo_name)
+            # Передаем семафор и общий клиент в каждую задачу
+            task = check_repo_for_updates(semaphore, client, repo_name, repo_path, last_repo_state)
             tasks.append((repo_name, task))
         
         results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
         
         for (repo_name, _), result in zip(tasks, results):
             if isinstance(result, Exception):
-                logger.error(f"[{repo_name}] Исключение: {result}")
+                logger.error(f"[{repo_name}] Исключение в задаче: {result}")
             elif result:
+                # Результат теперь словарь {"id": ..., "etag": ...}
                 new_state[repo_name] = result
                 logger.info(f"[{repo_name}] ✅ Состояние обновлено")
+            elif result is None and repo_name in current_state:
+                 # Если вернулся None (304), сохраняем старое состояние, чтобы не потерять его
+                 pass
     
     save_state(new_state)
     
