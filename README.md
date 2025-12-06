@@ -119,4 +119,11 @@ For regular checks (e.g., every 30 minutes), add an entry to crontab.
 
 **Bot is silent, although a release is out**
 *   Check `github_monitor.log`.
-*   Perhaps this release is already recorded in `github_releases_state.json`. Delete the corresponding line from the JSON file so the bot "forgets" the release and sends it again.
+*   Perhaps this release is already recorded in `github_releases_state.json`. To force a re-summary and re-notification for a specific repository, **edit `github_releases_state.json` and set both the `id` to `0` and `etag` to `null`** for that repository. For example:
+    ```json
+    "YourRepoName": {
+      "id": 0,
+      "etag": null
+    }
+    ```
+    This will make the bot "forget" the last seen state and re-process the latest release.
