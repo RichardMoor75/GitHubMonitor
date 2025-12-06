@@ -3,7 +3,7 @@
 [🇷🇺 Русский](README_RU.md) | [🇺🇸 English](README.md)
 
 **GitHub Monitor** is a tool for automatically tracking new releases in selected GitHub repositories.
-When a new version is released, the bot downloads the release notes, generates a concise and understandable summary using AI (via OpenRouter), and sends a notification to Telegram.
+When a new version is released, the bot downloads the release notes, generates a concise and understandable summary in **any specified language** using AI (via OpenRouter), and sends a notification to Telegram.
 
 ## 💻 Operating System
 
@@ -11,6 +11,7 @@ This application is designed and tested for **Linux** environments.
 
 ## ✨ Features
 
+*   **🌐 Multi-Language Summaries:** Generate AI summaries in any language you configure (e.g., English, French, Spanish).
 *   **🔔 Instant Notifications:** Sends messages to Telegram immediately upon detecting a new release.
 *   **🧠 AI Analysis:** Turns dry technical changelogs into structured reports (New Features, Fixes, Important).
 *   **🔄 Universal Model Support:** Works via OpenRouter API, allowing you to use GPT-4o, Claude 3.5 Sonnet, Google Gemini, and hundreds of other models.
