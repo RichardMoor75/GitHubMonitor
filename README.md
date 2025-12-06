@@ -52,6 +52,8 @@ Open `.env` and fill it in:
 *   `OPENROUTER_API_KEY`: API key from OpenRouter.
 *   `OPENROUTER_MODEL`: Model selection (e.g., `anthropic/claude-haiku-4.5` or `openai/gpt-4o-mini`).
 *   `SUMMARY_LANGUAGE`: The language for AI summaries (e.g., "English", "German"). Defaults to "Russian" if not set.
+*   `OPENROUTER_MAX_TOKENS`: Output token limit for AI responses (default: 1000). Increase if summaries are cut off.
+*   `OPENROUTER_MAX_INPUT_LENGTH`: Character limit for input release notes (default: 4000). Increase to process longer changelogs.
 *   `GITHUB_TOKEN`: (Optional but important) Your GitHub Personal Access Token to increase API limits.
 
 ### 2. Repository List

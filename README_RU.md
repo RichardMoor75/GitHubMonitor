@@ -52,6 +52,8 @@ cp .env.example .env
 *   `OPENROUTER_API_KEY`: Ключ API от OpenRouter.
 *   `OPENROUTER_MODEL`: Выбор модели (например, `anthropic/claude-haiku-4.5` или `openai/gpt-4o-mini`).
 *   `SUMMARY_LANGUAGE`: Язык, на котором будут генерироваться AI-саммари (например, "английском языке", "немецком языке"). По умолчанию "русском языке".
+*   `OPENROUTER_MAX_TOKENS`: Лимит токенов для ответа AI (по умолчанию 1000). Увеличьте, если ответы обрезаются.
+*   `OPENROUTER_MAX_INPUT_LENGTH`: Лимит символов для входящего текста release notes (по умолчанию 4000). Увеличьте для обработки длинных чейнджлогов.
 *   `GITHUB_TOKEN`: (Опционально, но важно) Ваш GitHub Personal Access Token для увеличения лимитов API.
 
 ### 2. Список репозиториев

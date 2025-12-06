@@ -68,7 +68,7 @@ logging.basicConfig(
 logger = logging.getLogger("GitHubMonitorOpenRouter")
 
 # --- Загрузка конфигурации ---
-def load_configuration() -> Tuple[str, int, str, Optional[str], str, str, int]:
+def load_configuration() -> Tuple[str, int, str, Optional[str], str, str, int, int]:
     """Загружает конфигурацию исключительно из переменных окружения (.env)."""
     try:
         bot_token = os.getenv('MONITOR_BOT_TOKEN')
@@ -78,12 +78,19 @@ def load_configuration() -> Tuple[str, int, str, Optional[str], str, str, int]:
         openrouter_model = os.getenv('OPENROUTER_MODEL', 'openai/gpt-4o-mini')
         summary_language = os.getenv('SUMMARY_LANGUAGE', 'русском языке') # Default to Russian
         max_tokens_str = os.getenv('OPENROUTER_MAX_TOKENS', '1000')
+        max_input_length_str = os.getenv('OPENROUTER_MAX_INPUT_LENGTH', '4000')
         
         try:
             max_tokens = int(max_tokens_str)
         except ValueError:
             logger.warning(f"Некорректное значение OPENROUTER_MAX_TOKENS: {max_tokens_str}, использую 1000")
             max_tokens = 1000
+
+        try:
+            max_input_length = int(max_input_length_str)
+        except ValueError:
+            logger.warning(f"Некорректное значение OPENROUTER_MAX_INPUT_LENGTH: {max_input_length_str}, использую 4000")
+            max_input_length = 4000
         
         # Валидация обязательных полей
         if not bot_token:
@@ -100,14 +107,14 @@ def load_configuration() -> Tuple[str, int, str, Optional[str], str, str, int]:
         if not openrouter_api_key or 'ВСТАВЬ_СЮДА' in openrouter_api_key:
             raise ValueError("API-ключ для OpenRouter не настроен. Получите ключ на https://openrouter.ai/")
         
-        return bot_token, admin_chat_id, openrouter_api_key, github_token, openrouter_model, summary_language, max_tokens
+        return bot_token, admin_chat_id, openrouter_api_key, github_token, openrouter_model, summary_language, max_tokens, max_input_length
         
     except Exception as e:
         logger.critical(f"КРИТИЧЕСКАЯ ОШИБКА при загрузке конфигурации: {e}")
         raise
 
 # Глобальные переменные для конфигурации
-BOT_TOKEN, ADMIN_CHAT_ID, OPENROUTER_API_KEY, GITHUB_TOKEN, OPENROUTER_MODEL, SUMMARY_LANGUAGE, MAX_TOKENS = load_configuration()
+BOT_TOKEN, ADMIN_CHAT_ID, OPENROUTER_API_KEY, GITHUB_TOKEN, OPENROUTER_MODEL, SUMMARY_LANGUAGE, MAX_TOKENS, MAX_INPUT_LENGTH = load_configuration()
 
 # Инициализация OpenRouter клиента
 # OpenRouter использует OpenAI-совместимый API
@@ -344,7 +351,7 @@ def get_openrouter_summary_with_retry(release_notes: str, language: str) -> str:
         return 'Нет описания.'
     
     # Обрезаем слишком длинные release notes для экономии токенов
-    max_length = 4000  # символов (увеличено для более развернутых ответов)
+    max_length = MAX_INPUT_LENGTH
     if len(release_notes) > max_length:
         release_notes = release_notes[:max_length] + "\n\n... (текст обрезан)"
         logger.info(f"📝 Release notes обрезаны до {max_length} символов")
